@@ -1,293 +1,205 @@
 #include <iostream>
-#include <fstream>
-#include <sstream>
+#include <mysql/mysql.h>
 #include <vector>
-#include <unordered_map>
-#include <queue>
-#include <set>
+#include <sstream>
 #include <ctime>
 #include <limits>
+#include <string>
 
 using namespace std;
 
-struct Book {
-    string title;
-    string author;
-    bool isAvailable;
-
-    Book(string t, string a) : title(t), author(a), isAvailable(true) {}
-
-    void display() {
-        cout << title << " by " << author << " - " << (isAvailable ? "Available" : "Issued") << endl;
-    }
-};
-
-struct InventoryNode {
-    Book* book;
-    InventoryNode* next;
-
-    InventoryNode(Book* b) : book(b), next(nullptr) {}
-};
-
-class Inventory {
-private:
-    InventoryNode* head;
-
-public:
-    Inventory() : head(nullptr) {}
-
-    ~Inventory() {
-        clear_inventory();
-    }
-
-    void add_book(Book* book) {
-        InventoryNode* newNode = new InventoryNode(book);
-        if (!head) {
-            head = newNode;
+MYSQL* connectDB() {
+    MYSQL* conn = mysql_init(nullptr);
+    if (conn) {
+        if (mysql_real_connect(conn, "localhost", "root", "password", "library", 3306, nullptr, 0)) {
+            cout << "Database connection successful!" << endl;
         } else {
-            InventoryNode* current = head;
-            while (current->next) {
-                current = current->next;
-            }
-            current->next = newNode;
+            cout << "Database connection failed: " << mysql_error(conn) << endl;
         }
+    } else {
+        cout << "MySQL initialization failed" << endl;
     }
+    return conn;
+}
 
-    void view_inventory() const {
-        InventoryNode* current = head;
-        while (current) {
-            current->book->display();
-            current = current->next;
-        }
-    }
+void closeDB(MYSQL* conn) {
+    mysql_close(conn);
+}
 
-    Book* search_book(const string& title) {
-        InventoryNode* current = head;
-        while (current) {
-            if (current->book->title == title) {
-                return current->book;
-            }
-            current = current->next;
-        }
-        return nullptr;
-    }
-
-    void clear_inventory() {
-        while (head) {
-            InventoryNode* temp = head;
-            head = head->next;
-            delete temp->book;
-            delete temp;
-        }
-    }
-
-    void load_books_from_file(const string& filename) {
-        ifstream file(filename);
-        if (file.is_open()) {
-            string line;
-            while (getline(file, line)) {
-                istringstream iss(line);
-                string title, author;
-                getline(iss, title, ',');
-                getline(iss, author);
-                add_book(new Book(title, author));
-            }
-            file.close();
-        } else {
-            cout << "Unable to open books file." << endl;
-        }
-    }
-};
-
-struct BorrowRecord {
-    string bookTitle;
-    string date;
-
-    BorrowRecord(const string& item, const string& d) : bookTitle(item), date(d) {}
-};
-
-struct User {
-    string username;
-    string password;
-    vector<BorrowRecord> borrowHistory;
-
-    User() : username(""), password("") {}
-};
-
-class UserManager {
-private:
-    unordered_map<string, User> users;
-    const string user_file = "users.txt";
+bool authenticate_user(MYSQL* conn, const string& username, const string& password) {
+    MYSQL_RES* res;
+    MYSQL_ROW row;
+    string query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "'";
     
-    void load_users() {
-        ifstream file(user_file);
-        if (file.is_open()) {
-            string line;
-            while (getline(file, line)) {
-                istringstream iss(line);
-                User user;
-                iss >> user.username >> user.password;
-                users[user.username] = user;
-            }
-            file.close();
-        }
-    }
-
-    void save_users() {
-        ofstream file(user_file);
-        if (file.is_open()) {
-            for (const auto& pair : users) {
-                file << pair.second.username << " "
-                     << pair.second.password << "\n";
-            }
-            file.close();
-        }
-    }
-
-    void save_borrow_history(const string& username) {
-        ofstream file("borrowed_history.txt", ios::trunc);
-        if (file.is_open()) {
-            for (const auto& record : users[username].borrowHistory) {
-                file << record.bookTitle << " " << record.date << "\n";
-            }
-            file.close();
-        } 
-    }
-
-    void load_borrow_history(const string& username) {
-        ifstream file("borrowed_history.txt");
-        if (file.is_open()) {
-            string line;
-            while (getline(file, line)) {
-                istringstream iss(line);
-                string bookTitle;
-                string date;
-
-                getline(iss, bookTitle, ' ');
-                getline(iss, date);
-
-                users[username].borrowHistory.emplace_back(bookTitle, date);
-            }
-            file.close();
-        }
-    }
-
-public: 
-    UserManager() {
-        load_users();
-    }
-
-    ~UserManager() {
-        save_users();
-        for (const auto& pair : users) {
-            save_borrow_history(pair.first);
-        }
-    }
-
-    bool add_user(const string& username, const string& password) {
-        if (users.find(username) != users.end()) {
-            return false;
-        }
-        User newUser;
-        newUser.username = username;
-        newUser.password = password;
-        users[username] = newUser;
-        return true;
-    }
-
-    bool authenticate_user(const string& username, const string& password) {
-        if (users.find(username) != users.end() && users[username].password == password) {
-            return true;
-        }
+    if (mysql_query(conn, query.c_str())) {
+        cout << "MySQL query error: " << mysql_error(conn) << endl;
         return false;
     }
-
-    User& get_user(const string& username) {
-        return users[username];
+    
+    res = mysql_store_result(conn);
+    if ((row = mysql_fetch_row(res))) {
+        mysql_free_result(res);
+        return true;
+    } else {
+        mysql_free_result(res);
+        return false;
     }
-};
+}
 
-class Library {
-private:
-    Inventory inventory;
-    UserManager userManager;
-    queue<Book*> issueQueue;
-
-    string get_current_date() {
-        time_t now = time(0);
-        tm* ltm = localtime(&now);
-        string date = to_string(ltm->tm_mday) + "-" + to_string(1 + ltm->tm_mon) + "-" + to_string(1900 + ltm->tm_year);
-        return date;
+bool register_user(MYSQL* conn, const string& username, const string& password) {
+    string query = "INSERT INTO users (username, password) VALUES ('" + username + "', '" + password + "')";
+    
+    if (mysql_query(conn, query.c_str())) {
+        cout << "MySQL query error: " << mysql_error(conn) << endl;
+        return false;
     }
+    return true;
+}
 
-public:
-    void load_books(const string& filename) {
-        inventory.load_books_from_file(filename);
+void add_book(MYSQL* conn, const string& title, const string& author) {
+    string query = "INSERT INTO books (title, author, is_available) VALUES ('" + title + "', '" + author + "', true)";
+    
+    if (mysql_query(conn, query.c_str())) {
+        cout << "MySQL query error: " << mysql_error(conn) << endl;
+    } else {
+        cout << "Book added successfully!" << endl;
     }
+}
 
-    void add_book(const string& title, const string& author) {
-        Book* newBook = new Book(title, author);
-        inventory.add_book(newBook);
+void view_books(MYSQL* conn) {
+    MYSQL_RES* res;
+    MYSQL_ROW row;
+    string query = "SELECT * FROM books";
+    
+    if (mysql_query(conn, query.c_str())) {
+        cout << "MySQL query error: " << mysql_error(conn) << endl;
+        return;
     }
-
-    void view_books() {
-        inventory.view_inventory();
+    
+    res = mysql_store_result(conn);
+    while ((row = mysql_fetch_row(res))) {
+        cout << row[1] << " by " << row[2] << " - " << (atoi(row[3]) ? "Available" : "Issued") << endl;
     }
+    mysql_free_result(res);
+}
 
-    void issue_book(const string& username, const string& title) {
-        Book* book = inventory.search_book(title);
-        if (book && book->isAvailable) {
-            book->isAvailable = false;
-            issueQueue.push(book);
-            string date = get_current_date();
-            BorrowRecord record(title, date);
-            userManager.get_user(username).borrowHistory.push_back(record);
+void issue_book(MYSQL* conn, const string& username, const string& title) {
+    MYSQL_RES* res;
+    MYSQL_ROW row;
+    string query = "SELECT * FROM books WHERE title = '" + title + "' AND is_available = true";
+    
+    if (mysql_query(conn, query.c_str())) {
+        cout << "MySQL query error: " << mysql_error(conn) << endl;
+        return;
+    }
+    
+    res = mysql_store_result(conn);
+    if ((row = mysql_fetch_row(res))) {
+        int book_id = atoi(row[0]);
+        mysql_free_result(res);
+
+        query = "UPDATE books SET is_available = false WHERE id = " + to_string(book_id);
+        if (mysql_query(conn, query.c_str())) {
+            cout << "MySQL query error: " << mysql_error(conn) << endl;
+            return;
+        }
+
+        query = "SELECT id FROM users WHERE username = '" + username + "'";
+        if (mysql_query(conn, query.c_str())) {
+            cout << "MySQL query error: " << mysql_error(conn) << endl;
+            return;
+        }
+        
+        res = mysql_store_result(conn);
+        row = mysql_fetch_row(res);
+        int user_id = atoi(row[0]);
+        mysql_free_result(res);
+
+        string date = get_current_date();
+        query = "INSERT INTO borrow_history (user_id, book_id, borrow_date) VALUES (" + to_string(user_id) + ", " + to_string(book_id) + ", '" + date + "')";
+        if (mysql_query(conn, query.c_str())) {
+            cout << "MySQL query error: " << mysql_error(conn) << endl;
+        } else {
             cout << "Book issued: " << title << endl;
+        }
+    } else {
+        cout << "Book is not available or does not exist" << endl;
+        mysql_free_result(res);
+    }
+}
+
+void return_book(MYSQL* conn, const string& username, const string& title) {
+    MYSQL_RES* res;
+    MYSQL_ROW row;
+    string query = "SELECT * FROM books WHERE title = '" + title + "' AND is_available = false";
+    
+    if (mysql_query(conn, query.c_str())) {
+        cout << "MySQL query error: " << mysql_error(conn) << endl;
+        return;
+    }
+    
+    res = mysql_store_result(conn);
+    if ((row = mysql_fetch_row(res))) {
+        int book_id = atoi(row[0]);
+        mysql_free_result(res);
+
+        query = "UPDATE books SET is_available = true WHERE id = " + to_string(book_id);
+        if (mysql_query(conn, query.c_str())) {
+            cout << "MySQL query error: " << mysql_error(conn) << endl;
+            return;
+        }
+
+        query = "DELETE FROM borrow_history WHERE book_id = " + to_string(book_id) + " ORDER BY borrow_date DESC LIMIT 1";
+        if (mysql_query(conn, query.c_str())) {
+            cout << "MySQL query error: " << mysql_error(conn) << endl;
         } else {
-            cout << "Book is not available or does not exist" << endl;
+            cout << "Book returned: " << title << endl;
         }
+    } else {
+        cout << "No record found for the issued book" << endl;
+        mysql_free_result(res);
     }
+}
 
-    void return_book(const string& username, const string& title) {
-        if (!issueQueue.empty()) {
-            Book* book = issueQueue.front();
-            if (book->title == title) {
-                book->isAvailable = true;
-                issueQueue.pop();
-                cout << "Book returned: " << title << endl;
-            } else {
-                cout << "The book at the front of the queue does not match the title" << endl;
-            }
-        } else {
-            cout << "No books are currently issued" << endl;
-        }
+void view_borrow_history(MYSQL* conn, const string& username) {
+    MYSQL_RES* res;
+    MYSQL_ROW row;
+    string query = "SELECT id FROM users WHERE username = '" + username + "'";
+    
+    if (mysql_query(conn, query.c_str())) {
+        cout << "MySQL query error: " << mysql_error(conn) << endl;
+        return;
     }
+    
+    res = mysql_store_result(conn);
+    row = mysql_fetch_row(res);
+    int user_id = atoi(row[0]);
+    mysql_free_result(res);
 
-    void view_borrow_history(const string& username) {
-        const vector<BorrowRecord>& history = userManager.get_user(username).borrowHistory;
-        for (const auto& record : history) {
-            cout << "Book: " << record.bookTitle << ", Date: " << record.date << endl;
-        }
+    query = "SELECT books.title, borrow_history.borrow_date FROM borrow_history JOIN books ON borrow_history.book_id = books.id WHERE borrow_history.user_id = " + to_string(user_id);
+    
+    if (mysql_query(conn, query.c_str())) {
+        cout << "MySQL query error: " << mysql_error(conn) << endl;
+        return;
     }
+    
+    res = mysql_store_result(conn);
+    while ((row = mysql_fetch_row(res))) {
+        cout << "Book: " << row[0] << ", Date: " << row[1] << endl;
+    }
+    mysql_free_result(res);
+}
 
-    bool login(const string& username, const string& password) {
-        return userManager.authenticate_user(username, password);
-    }
-
-    void register_user(const string& username, const string& password) {
-        if (userManager.add_user(username, password)) {
-            cout << "User registered successfully!" << endl;
-        } else {
-            cout << "Username already exists!" << endl;
-        }
-    }
-};
+string get_current_date() {
+    time_t now = time(0);
+    tm* ltm = localtime(&now);
+    string date = to_string(ltm->tm_mday) + "-" + to_string(1 + ltm->tm_mon) + "-" + to_string(1900 + ltm->tm_year);
+    return date;
+}
 
 int main() {
-    Library lib;
-    UserManager userManager;
-
-    lib.load_books("books.txt");
+    MYSQL* conn = connectDB();
+    if (!conn) return 1;
 
     string username, password;
     bool loggedIn = false;
@@ -307,14 +219,18 @@ int main() {
                 cin >> username;
                 cout << "Enter password: ";
                 cin >> password;
-                lib.register_user(username, password);
+                if (register_user(conn, username, password)) {
+                    cout << "Registration successful!" << endl;
+                } else {
+                    cout << "Registration failed!" << endl;
+                }
                 break;
             case 2:
                 cout << "Enter username: ";
                 cin >> username;
                 cout << "Enter password: ";
                 cin >> password;
-                if (lib.login(username, password)) {
+                if (authenticate_user(conn, username, password)) {
                     cout << "Login successful!" << endl;
                     loggedIn = true;
 
@@ -336,18 +252,18 @@ int main() {
                                 getline(cin, title);
                                 cout << "Enter book author: ";
                                 getline(cin, author);
-                                lib.add_book(title, author);
+                                add_book(conn, title, author);
                                 break;
                             }
                             case 2:
-                                lib.view_books();
+                                view_books(conn);
                                 break;
                             case 3: {
                                 string title;
                                 cout << "Enter book title: ";
                                 cin.ignore();
                                 getline(cin, title);
-                                lib.issue_book(username, title);
+                                issue_book(conn, username, title);
                                 break;
                             }
                             case 4: {
@@ -355,11 +271,11 @@ int main() {
                                 cout << "Enter book title: ";
                                 cin.ignore();
                                 getline(cin, title);
-                                lib.return_book(username, title);
+                                return_book(conn, username, title);
                                 break;
                             }
                             case 5:
-                                lib.view_borrow_history(username);
+                                view_borrow_history(conn, username);
                                 break;
                             case 6:
                                 loggedIn = false;
@@ -374,6 +290,7 @@ int main() {
                 }
                 break;
             case 3:
+                closeDB(conn);
                 return 0;
             default:
                 cout << "Invalid choice!" << endl;
